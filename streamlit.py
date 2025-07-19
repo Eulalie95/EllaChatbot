@@ -6,69 +6,67 @@ import uuid
 # --- Configuration ---
 API_URL = "http://127.0.0.1:8000/chat"
 
+# --- Initialisation de session ---
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
-    
-# --- Titre de l'application Streamlit ---
-st.title("Ella")
 
-# --- Initialisation de l'historique de conversation ---
-if 'messages' not in st.session_state:
+if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- Conteneur pour l'affichage des messages ---
-chat_container = st.container()
+# --- Titre ---
+st.title("Ella")
 
-# --- Zone de saisie et d'upload dans un formulaire ---
+# --- Affichage des messages précédents ---
+with st.container():
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+# --- Formulaire utilisateur ---
 with st.form("chat_form", clear_on_submit=True):
     prompt = st.text_input("Posez votre question ici (ou uploadez une image)...", key="prompt_input")
     uploaded_file = st.file_uploader("Uploader une image (optionnel)", type=["png", "jpg", "jpeg", "gif", "tiff", "bmp"], key="file_uploader")
     submitted = st.form_submit_button("Envoyer")
 
-    if submitted:
-        user_content = prompt if prompt else ""
-        st.session_state.messages.append({"role": "user", "content": user_content + (f"\n[Image: {uploaded_file.name}]" if uploaded_file else "")})
+if submitted:
+    user_content = prompt.strip() if prompt else ""
+    if uploaded_file:
+        user_content += f"\n[Image: {uploaded_file.name}]"
 
-        # --- Appel à l'API FastAPI ---
-        with st.spinner("En attente de la réponse..."):
-            try:
-                files = None
-                data = {"query": user_content, "session_id": st.session_state.session_id}
-                headers = {}
+    st.session_state.messages.append({"role": "user", "content": user_content})
 
-                if uploaded_file:
-                    files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-                else:
-                    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    # Préparation de la requête
+    data = {
+        "query": prompt,
+        "session_id": st.session_state.session_id
+    }
 
-                response = requests.post(API_URL, files=files, data=data, headers=headers)
+    files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)} if uploaded_file else None
 
-                if response.status_code == 200:
-                    api_response = response.json()
-                    bot_answer = api_response.get("answer", "Erreur: Clé 'answer' non trouvée dans la réponse de l'API.")
-                    st.session_state.messages.append({"role": "assistant", "content": bot_answer})
-                else:
-                    error_message = f"Erreur de l'API : Statut {response.status_code}"
-                    try:
-                        error_details = response.json()
-                        error_message += f" - Détails : {error_details.get('detail', 'N/A')}"
-                    except json.JSONDecodeError:
-                        error_message += f" - Réponse non-JSON : {response.text[:100]}..."
-                    st.error(error_message)
-                    st.session_state.messages.append({"role": "assistant", "content": f"Erreur: {error_message}"})
+    # Requête POST vers l’API FastAPI
+    with st.spinner("En attente de la réponse..."):
+        try:
+            response = requests.post(API_URL, data=data, files=files)
 
-            except requests.exceptions.ConnectionError:
-                error_message = f"Erreur de connexion : Impossible de joindre l'API à {API_URL}. Assurez-vous que votre application FastAPI tourne."
-                st.error(error_message)
-                st.session_state.messages.append({"role": "assistant", "content": f"Erreur: {error_message}"})
+            if response.status_code == 200:
+                api_response = response.json()
+                bot_answer = api_response.get("answer", "Réponse vide.")
+                st.session_state.messages.append({"role": "assistant", "content": bot_answer})
+            else:
+                try:
+                    error_details = response.json().get("detail", "Erreur inconnue.")
+                except:
+                    error_details = response.text[:100]
+                msg = f"Erreur de l'API : {response.status_code} - {error_details}"
+                st.session_state.messages.append({"role": "assistant", "content": msg})
+                st.error(msg)
 
-            except Exception as e:
-                error_message = f"Une erreur inattendue s'est produite : {e}"
-                st.error(error_message)
-                st.session_state.messages.append({"role": "assistant", "content": f"Erreur: {error_message}"})
+        except requests.exceptions.ConnectionError:
+            msg = f"Erreur de connexion : Impossible de joindre l'API à {API_URL}."
+            st.session_state.messages.append({"role": "assistant", "content": msg})
+            st.error(msg)
 
-# --- Affichage de l'historique des messages dans le conteneur ---
-with chat_container:
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+        except Exception as e:
+            msg = f"Erreur inattendue : {str(e)}"
+            st.session_state.messages.append({"role": "assistant", "content": msg})
+            st.error(msg)
